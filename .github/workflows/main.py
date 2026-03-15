@@ -80,11 +80,11 @@ class Portfolio:
         if pos.quantity == 0: del self.positions[ticker]
 
 class UserProfile:
-    def __init__(self, name, dob_str, risk_level, savings_goal, strategy="classical"):
+    def __init__(self, name, dob_str, risk_level, investment_goal, strategy="classical"):
         self.name = name
         self.dob = dob_str if isinstance(dob_str, date) else date.fromisoformat(str(dob_str))
         self.risk_level = risk_level
-        self.savings_goal = savings_goal
+        self.investment_goal = investment_goal
         self.strategy = strategy
     @property
     def age(self):
@@ -124,7 +124,7 @@ st.sidebar.header("👤 User Profile Settings")
 u_name = st.sidebar.text_input("Investor Name", "Name")
 u_dob = st.sidebar.date_input("Date of Birth", date(2000, 1, 1))
 u_risk = st.sidebar.slider("Risk Level (1-5)", 1, 5, 3)
-u_goal = st.sidebar.number_input("Savings Goal ($)", value=10000.0)
+u_goal = st.sidebar.number_input("Investment Goal ($)", value=10000.0)
 u_cash = st.sidebar.number_input("Initial Cash ($)", value=5000.0)
 u_strat = st.sidebar.selectbox("Investment Strategy", ["Classical", "Buffett", "Graham"])
 
@@ -140,7 +140,7 @@ else:
     st.session_state.user.dob = u_dob
     st.session_state.user.risk_level = u_risk
     st.session_state.user.strategy = u_strat
-    st.session_state.user.savings_goal = u_goal
+    st.session_state.user.investment_goal = u_goal
 
 port = st.session_state.portfolio
 user = st.session_state.user
@@ -233,7 +233,7 @@ with tabs[1]:
         
         total_nav = port.cash_balance + total_assets_value
         col_m2.metric("Total NAV", f"${total_nav:,.2f}")
-        col_m3.metric("Savings Goal", f"${user.savings_goal:,.2f}", f"{((total_nav/user.savings_goal)*100):.1f}% of target")
+        col_m3.metric("Investment Goal", f"${user.investment_goal:,.2f}", f"{((total_nav/user.investment_goal)*100):.1f}% of target")
 
         # Display Dataframe with color coding
         df = pd.DataFrame(rows)

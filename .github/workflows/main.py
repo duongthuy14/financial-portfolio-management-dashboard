@@ -105,9 +105,9 @@ st.set_page_config(page_title="Investment Management System", layout="wide")
 def get_market_info(ticker):
     try:
         t = yf.Ticker(ticker)
-        # Lấy giá và loại tài sản chính xác từ Yahoo Finance
+        # Sử dụng fast_info để lấy giá nhanh
         price = float(t.fast_info['lastPrice'])
-        # quoteType: EQUITY, ETF, FUTURE, CURRENCY, etc.
+        # Lấy quoteType để kiểm tra loại tài sản
         mkt_type = t.info.get('quoteType', 'UNKNOWN')
         return price, mkt_type
     except:
@@ -160,40 +160,40 @@ with tabs[0]:
         q_buy = st.number_input("Quantity:", min_value=1, step=1, key="q_buy")
         a_type = st.selectbox("Asset Class:", ["Stock", "Bond", "Derivative"])
         if st.button("Confirm Purchase"):
-            if t_input:
-                price, mkt_type = get_market_info(t_input)
+            if t_buy:
+                price, mkt_type = get_market_info(t_buy)
                 
                 if price:
                     # --- LOGIC KIỂM CHỨNG (VALIDATION) ---
                     error_msg = ""
                     
                     # 1. Kiểm tra nếu chọn Bond nhưng mã là Stock
-                    if user_choice == "Bond" and mkt_type == "EQUITY":
-                        error_msg = f"❌ REJECTED: {t_input} is an EQUITY (Stock), you cannot buy it as a Bond."
+                    if a_type == "Bond" and mkt_type == "EQUITY":
+                        error_msg = f"❌ REJECTED: {t_buy} is an EQUITY (Stock), you cannot buy it as a Bond."
                     
                     # 2. Kiểm tra nếu chọn Stock nhưng mã là ETF (Thường là Bond ETF)
-                    elif user_choice == "Stock" and mkt_type == "ETF":
-                        st.warning(f"Note: {t_input} is an ETF. Proceeding as Stock.")
+                    elif a_type == "Stock" and mkt_type == "ETF":
+                        st.warning(f"Note: {t_buy} is an ETF. Proceeding as Stock.")
                     
                     # 3. Kiểm tra Derivative quyền hạn
-                    elif user_choice == "Derivative":
+                    elif a_type == "Derivative":
                         if u_risk < 4:
                             error_msg = "❌ REJECTED: Risk level too low for Derivatives."
                         elif mkt_type not in ["FUTURE", "OPTION", "ETF"]: # ETF có thể là Inverse/Leveraged
-                            error_msg = f"❌ REJECTED: {t_input} is {mkt_type}, not a recognized Derivative."
+                            error_msg = f"❌ REJECTED: {t_buy} is {mkt_type}, not a recognized Derivative."
     
                     # --- THỰC THI NẾU KHÔNG CÓ LỖI ---
                     if error_msg:
                         st.error(error_msg)
                     else:
                         # Tạo đúng loại Object để lưu vào Portfolio
-                        if user_choice == "Stock": new_asset = Stock(t_input, price)
-                        elif user_choice == "Bond": new_asset = Bond(t_input, price)
-                        else: new_asset = Derivative(t_input, price)
+                        if a_type == "Stock": new_asset = Stock(t_buy, price)
+                        elif a_type == "Bond": new_asset = Bond(t_buy, price)
+                        else: new_asset = Derivative(t_buy, price)
                         
                         try:
-                            port.buy(new_asset, qty)
-                            st.success(f"✅ Success: Bought {qty} {t_input} at ${price:,.2f}")
+                            port.buy(new_asset, q_buy)
+                            st.success(f"✅ Success: Bought {q_buy} {t_buy} at ${price:,.2f}")
                         except InsufficientFundsError as e:
                             st.error(e)
                 else:

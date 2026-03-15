@@ -102,18 +102,16 @@ class UserProfile:
 # ==========================================
 st.set_page_config(page_title="Investment Management System", layout="wide")
 
-def get_market_data(ticker):
+def get_market_info(ticker):
     try:
         t = yf.Ticker(ticker)
-        # Sử dụng fast_info vì nó ổn định hơn info thông thường
+        # Lấy giá và loại tài sản chính xác từ Yahoo Finance
         price = float(t.fast_info['lastPrice'])
-        # Cố gắng lấy loại tài sản, nếu lỗi mặc định là EQUITY
-        try:
-            q_type = t.info.get('quoteType', 'EQUITY')
-        except:
-            q_type = 'EQUITY' 
-        return price, q_type
-    except: return None, None
+        # quoteType: EQUITY, ETF, FUTURE, CURRENCY, etc.
+        mkt_type = t.info.get('quoteType', 'UNKNOWN')
+        return price, mkt_type
+    except:
+        return None, None
         
 def get_live_price(ticker):
     try:
@@ -161,7 +159,7 @@ with tabs[0]:
         t_buy = st.text_input("Enter Ticker (e.g., AAPL):", key="t_buy").upper()
         q_buy = st.number_input("Quantity:", min_value=1, step=1, key="q_buy")
         a_type = st.selectbox("Asset Class:", ["Stock", "Bond", "Derivative"])
-        if st.button("Execute Trade"):
+        if st.button("Confirm Purchase"):
         if t_input:
             price, mkt_type = get_market_info(t_input)
             

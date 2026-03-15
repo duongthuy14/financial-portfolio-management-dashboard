@@ -102,22 +102,25 @@ class UserProfile:
 # ==========================================
 st.set_page_config(page_title="Investment Management System", layout="wide")
 
-def get_market_info(ticker):
+def get_market_data(ticker):
     try:
         t = yf.Ticker(ticker)
-        # Sử dụng fast_info để lấy giá nhanh
+        # Sử dụng fast_info để lấy giá (rất nhanh và ổn định)
         price = float(t.fast_info['lastPrice'])
-        # Lấy quoteType để kiểm tra loại tài sản
-        mkt_type = t.info.get('quoteType', 'UNKNOWN')
-        return price, mkt_type
-    except:
-        return None, None
         
-def get_live_price(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        return float(t.fast_info['lastPrice'])
-    except: return 0.0
+        # Sử dụng metadata để lấy loại tài sản thay vì t.info (giảm lỗi)
+        metadata = t.get_history_metadata()
+        mkt_type = metadata.get('instrumentType', 'EQUITY').upper()
+        
+        return price, mkt_type
+    except Exception as e:
+        # Nếu fast_info lỗi, thử cách truyền thống nhưng có bọc bảo vệ
+        try:
+            t = yf.Ticker(ticker)
+            price = t.history(period="1d")['Close'].iloc[-1]
+            return float(price), "EQUITY"
+        except:
+            return None, None
 
 # Sidebar Settings
 st.sidebar.header("👤 User Profile Settings")
@@ -161,7 +164,7 @@ with tabs[0]:
         a_type = st.selectbox("Asset Class:", ["Stock", "Bond", "Derivative"])
         if st.button("Confirm Purchase"):
             if t_buy:
-                price, mkt_type = get_market_info(t_buy)
+                price, mkt_type = get_market_data(t_buy)
                 
                 if price:
                     # --- LOGIC KIỂM CHỨNG (VALIDATION) ---

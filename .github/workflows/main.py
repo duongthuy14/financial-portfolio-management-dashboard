@@ -46,12 +46,6 @@ class Bond(Asset):
         self.coupon_rate = coupon_rate
     def get_asset_type(self): return "Bond"
 
-class Derivatives(Asset):
-    def __init__(self, ticker, underlying):
-        super().__init__(ticker, 0.0)
-        self.underlying = underlying
-    def get_asset_type(self): return "Derivative"
-
 class Position:
     def __init__(self, asset, quantity, avg_buy_price):
         self.asset = asset
@@ -71,7 +65,7 @@ class Portfolio:
     def buy(self, asset, quantity):
         cost = asset.current_price * quantity
         if cost > self.cash_balance:
-            raise InsufficientFundsError(f"Cần ${cost:,.2f}, nhưng bạn chỉ có ${self.cash_balance:,.2f}")
+            raise InsufficientFundsError(f"Required: ${cost:,.2f}, Available: ${self.cash_balance:,.2f}")
         self.cash_balance -= cost
         if asset.ticker in self.positions:
             self.positions[asset.ticker].update_position(quantity, asset.current_price)
@@ -79,7 +73,7 @@ class Portfolio:
             self.positions[asset.ticker] = Position(asset, quantity, asset.current_price)
     def sell_asset(self, ticker, quantity):
         if ticker not in self.positions or self.positions[ticker].quantity < quantity:
-            raise InsufficientSharesError(f"Không đủ cổ phiếu {ticker} để bán.")
+            raise InsufficientSharesError(f"Insufficient shares of {ticker}.")
         pos = self.positions[ticker]
         self.cash_balance += quantity * pos.asset.current_price
         pos.quantity -= quantity
@@ -88,7 +82,7 @@ class Portfolio:
 class UserProfile:
     def __init__(self, name, dob_str, risk_level, savings_goal, strategy="classical"):
         self.name = name
-        self.dob = date.fromisoformat(dob_str)
+        self.dob = dob_str if isinstance(dob_str, date) else date.fromisoformat(str(dob_str))
         self.risk_level = risk_level
         self.savings_goal = savings_goal
         self.strategy = strategy
@@ -106,7 +100,7 @@ class UserProfile:
 # ==========================================
 # 3. STREAMLIT UI (FRONTEND)
 # ==========================================
-st.set_page_config(page_title="Hệ thống Quản lý Đầu tư", layout="wide")
+st.set_page_config(page_title="Investment Management System", layout="wide")
 
 def get_live_price(ticker):
     try:
@@ -114,98 +108,131 @@ def get_live_price(ticker):
         return float(t.fast_info['lastPrice'])
     except: return 0.0
 
-# Sidebar Setup
-st.sidebar.header("👤 User Profile")
-u_name = st.sidebar.text_input("Name")
-u_dob = st.sidebar.date_input("Date of birth")
-u_risk = st.sidebar.slider("Risk level (1-5)", 1, 5, 3)
-u_goal = st.sidebar.number_input("Mục tiêu tiết kiệm ($)", value=10000.0)
-u_cash = st.sidebar.number_input("Vốn ban đầu ($)", value=5000.0)
-u_strat = st.sidebar.selectbox("Chiến thuật", ["classical", "buffett", "graham"])
+# Sidebar Settings
+st.sidebar.header("👤 User Profile Settings")
+u_name = st.sidebar.text_input("Investor Name", "UEH Student")
+u_dob = st.sidebar.date_input("Date of Birth", date(2000, 1, 1))
+u_risk = st.sidebar.slider("Risk Level (1-5)", 1, 5, 3)
+u_goal = st.sidebar.number_input("Savings Goal ($)", value=10000.0)
+u_cash = st.sidebar.number_input("Initial Cash ($)", value=5000.0)
+u_strat = st.sidebar.selectbox("Investment Strategy", ["classical", "buffett", "graham"])
 
-# Lưu trữ trạng thái bằng Session State
+# Session State Management & Data Sync
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = Portfolio(u_cash)
+
 if 'user' not in st.session_state:
-    st.session_state.user = UserProfile(u_name, str(u_dob), u_risk, u_goal, u_strat)
+    st.session_state.user = UserProfile(u_name, u_dob, u_risk, u_goal, u_strat)
+else:
+    # Sync Sidebar changes to the dashboard instantly
+    st.session_state.user.name = u_name
+    st.session_state.user.dob = u_dob
+    st.session_state.user.risk_level = u_risk
+    st.session_state.user.strategy = u_strat
+    st.session_state.user.savings_goal = u_goal
 
 port = st.session_state.portfolio
 user = st.session_state.user
 
-# Giao diện chính
+# Main Dashboard Header
 st.title("📊 Financial Portfolio Dashboard")
-st.write(f"Chào mừng **{user.name}** ({user.age} tuổi) | Chiến thuật: **{user.strategy.upper()}**")
+st.write(f"Welcome back, **{user.name}** ({user.age} years old) | Strategy: **{user.strategy.upper()}**")
 
-tab1, tab2, tab3 = st.tabs(["🎯 Giao dịch", "💰 Danh mục hiện tại", "📈 Biểu đồ lịch sử"])
+if st.sidebar.button("Reset Portfolio"):
+    st.session_state.clear()
+    st.rerun()
 
-with tab1:
+tabs = st.tabs(["🎯 Trading Terminal", "💰 Portfolio Summary", "📈 Market Analysis"])
+
+# TAB 1: TRADING TERMINAL
+with tabs[0]:
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Mua tài sản")
-        t_buy = st.text_input("Nhập mã (Ticker):", key="t_buy").upper()
-        q_buy = st.number_input("Số lượng mua:", min_value=1, step=1, key="q_buy")
-        a_type = st.selectbox("Phân loại:", ["Stock", "Bond", "Derivative"])
-        if st.button("Xác nhận Mua"):
+        st.subheader("Buy Assets")
+        t_buy = st.text_input("Enter Ticker (e.g., AAPL):", key="t_buy").upper()
+        q_buy = st.number_input("Quantity:", min_value=1, step=1, key="q_buy")
+        a_type = st.selectbox("Asset Class:", ["Stock", "Bond", "Derivative"])
+        if st.button("Confirm Buy"):
             ticker = resolve_stock_ticker(t_buy)
             if ticker:
                 price = get_live_price(ticker)
                 if price > 0:
                     if a_type == "Derivative" and not user.is_derivative_allowed():
-                        st.error("Rủi ro cấp độ 4 mới được phép giao dịch Phái sinh!")
+                        st.error("Risk Level 4+ required for Derivative trading!")
                     else:
                         try:
                             asset = Stock(ticker, price) if a_type == "Stock" else Bond(ticker, price)
                             port.buy(asset, q_buy)
-                            st.success(f"Đã mua {q_buy} {ticker} tại giá ${price:,.2f}")
+                            st.success(f"Bought {q_buy} units of {ticker} at ${price:,.2f}")
                         except InsufficientFundsError as e: st.error(e)
-                else: st.error("Không lấy được giá thị trường.")
-            else: st.error("Mã không hợp lệ.")
+                else: st.error("Market price unavailable.")
+            else: st.error("Invalid ticker.")
 
     with c2:
-        st.subheader("Bán tài sản")
-        t_sell = st.text_input("Mã muốn bán:", key="t_sell").upper()
-        q_sell = st.number_input("Số lượng bán:", min_value=1, step=1, key="q_sell")
-        if st.button("Xác nhận Bán"):
+        st.subheader("Sell Assets")
+        t_sell = st.text_input("Enter Ticker to Sell:", key="t_sell").upper()
+        q_sell = st.number_input("Quantity to Sell:", min_value=1, step=1, key="q_sell")
+        if st.button("Confirm Sell"):
             try:
                 port.sell_asset(t_sell, q_sell)
-                st.success(f"Đã bán {q_sell} {t_sell}")
+                st.success(f"Successfully sold {q_sell} units of {t_sell}")
             except Exception as e: st.error(e)
 
-with tab2:
-    col_m1, col_m2 = st.columns(2)
-    col_m1.metric("Tiền mặt dư", f"${port.cash_balance:,.2f}")
+# TAB 2: PORTFOLIO SUMMARY
+with tabs[1]:
+    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1.metric("Cash Balance", f"${port.cash_balance:,.2f}")
     
     if port.positions:
         rows = []
-        total_nav = port.cash_balance
+        total_assets_value = 0
         for t, pos in port.positions.items():
             current_p = get_live_price(t)
             pos.asset.current_price = current_p
-            total_nav += pos.market_value()
+            total_assets_value += pos.market_value()
+            
+            pnl_val = pos.pnl()
             rows.append({
-                "Ticker": t, "Số lượng": pos.quantity, 
-                "Giá TB": f"${pos.avg_buy_price:.2f}", 
-                "Giá hiện tại": f"${current_p:.2f}",
-                "Lãi/Lỗ ($)": f"{pos.pnl():.2f}"
+                "Ticker": t, 
+                "Qty": pos.quantity, 
+                "Avg Price": f"${pos.avg_buy_price:,.2f}", 
+                "Current Price": f"${current_p:,.2f}",
+                "P&L ($)": pnl_val
             })
-        col_m2.metric("Tổng giá trị (NAV)", f"${total_nav:,.2f}")
-        st.table(pd.DataFrame(rows))
         
-        # Biểu đồ tỷ trọng
-        st.subheader("Phân bổ tài sản")
+        total_nav = port.cash_balance + total_assets_value
+        col_m2.metric("Total NAV", f"${total_nav:,.2f}")
+        col_m3.metric("Savings Goal", f"${user.savings_goal:,.2f}", f"{((total_nav/user.savings_goal)*100):.1f}% of target")
+
+        # Display Dataframe with color coding
+        df = pd.DataFrame(rows)
+        def color_pnl(val):
+            color = 'green' if val > 0 else 'red'
+            return f'color: {color}'
+        
+        st.subheader("Holdings Detail")
+        st.dataframe(df.style.applymap(color_pnl, subset=['P&L ($)']))
+        
+        # Allocation Chart
+        st.subheader("Asset Allocation")
         labels = list(port.positions.keys()) + ["Cash"]
         sizes = [p.market_value() for p in port.positions.values()] + [port.cash_balance]
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(6, 4))
         ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
         st.pyplot(fig)
     else:
-        st.info("Danh mục của bạn chưa có cổ phiếu nào.")
+        st.info("Your portfolio is currently empty. Start trading to see your summary!")
 
-with tab3:
-    t_chart = st.text_input("Mã chứng khoán xem lịch sử:", value="AAPL").upper()
-    period = st.selectbox("Khoảng thời gian", ["1mo", "3mo", "6mo", "1y", "5y"])
-    if st.button("Tải biểu đồ"):
-        data = yf.download(t_chart, period=period)
-        if not data.empty:
-            st.line_chart(data['Close'])
-        else: st.warning("Không tìm thấy dữ liệu.")
+# TAB 3: MARKET ANALYSIS
+with tabs[2]:
+    st.subheader("Historical Price Charts")
+    t_chart = st.text_input("Symbol to Analyze:", value="AAPL").upper()
+    period = st.select_slider("Select Period", options=["1mo", "3mo", "6mo", "1y", "5y"])
+    if st.button("Generate Chart"):
+        with st.spinner('Fetching market data...'):
+            data = yf.download(t_chart, period=period)
+            if not data.empty:
+                st.line_chart(data['Close'])
+                st.write(f"Latest Stats for {t_chart}:")
+                st.table(data.tail(5))
+            else: st.warning("Data not found for this symbol.")

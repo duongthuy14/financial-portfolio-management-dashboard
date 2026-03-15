@@ -110,7 +110,7 @@ def get_live_price(ticker):
 
 # Sidebar Settings
 st.sidebar.header("👤 User Profile Settings")
-u_name = st.sidebar.text_input("Investor Name", "UEH Student")
+u_name = st.sidebar.text_input("Investor Name", "Name")
 u_dob = st.sidebar.date_input("Date of Birth", date(2000, 1, 1))
 u_risk = st.sidebar.slider("Risk Level (1-5)", 1, 5, 3)
 u_goal = st.sidebar.number_input("Savings Goal ($)", value=10000.0)
@@ -137,10 +137,6 @@ user = st.session_state.user
 # Main Dashboard Header
 st.title("📊 Financial Portfolio Dashboard")
 st.write(f"Welcome back, **{user.name}** ({user.age} years old) | Strategy: **{user.strategy.upper()}**")
-
-if st.sidebar.button("Reset Portfolio"):
-    st.session_state.clear()
-    st.rerun()
 
 tabs = st.tabs(["🎯 Trading Terminal", "💰 Portfolio Summary", "📈 Market Analysis"])
 

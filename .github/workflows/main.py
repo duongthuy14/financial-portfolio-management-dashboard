@@ -115,7 +115,7 @@ u_dob = st.sidebar.date_input("Date of Birth", date(2000, 1, 1))
 u_risk = st.sidebar.slider("Risk Level (1-5)", 1, 5, 3)
 u_goal = st.sidebar.number_input("Savings Goal ($)", value=10000.0)
 u_cash = st.sidebar.number_input("Initial Cash ($)", value=5000.0)
-u_strat = st.sidebar.selectbox("Investment Strategy", ["classical", "buffett", "graham"])
+u_strat = st.sidebar.selectbox("Investment Strategy", ["Classical", "Buffett", "Graham"])
 
 # Session State Management & Data Sync
 if 'portfolio' not in st.session_state:
@@ -140,6 +140,19 @@ st.write(f"Welcome back, **{user.name}** ({user.age} years old) | Strategy: **{u
 
 tabs = st.tabs(["🎯 Trading Terminal", "💰 Portfolio Summary", "📈 Market Analysis"])
 
+def get_asset_details(ticker):
+    try:
+        t = yf.Ticker(ticker)
+        info = t.fast_info
+        # Lấy loại tài sản (yfinance đôi khi để trong t.info['quoteType'])
+        full_info = t.info
+        return {
+            "price": float(info['lastPrice']),
+            "type": full_info.get('quoteType', 'UNKNOWN')
+        }
+    except:
+        return None
+        
 # TAB 1: TRADING TERMINAL
 with tabs[0]:
     c1, c2 = st.columns(2)
@@ -151,18 +164,43 @@ with tabs[0]:
         if st.button("Confirm Buy"):
             ticker = resolve_stock_ticker(t_buy)
             if ticker:
-                price = get_live_price(ticker)
-                if price > 0:
-                    if a_type == "Derivative" and not user.is_derivative_allowed():
-                        st.error("Risk Level 4+ required for Derivative trading!")
-                    else:
-                        try:
-                            asset = Stock(ticker, price) if a_type == "Stock" else Bond(ticker, price)
-                            port.buy(asset, q_buy)
-                            st.success(f"Bought {q_buy} units of {ticker} at ${price:,.2f}")
-                        except InsufficientFundsError as e: st.error(e)
-                else: st.error("Market price unavailable.")
-            else: st.error("Invalid ticker.")
+                details = get_asset_details(ticker)
+                
+                if details and details['price'] > 0:
+                    market_type = details['type'] # Ví dụ: 'EQUITY' hoặc 'ETF'
+                    price = details['price']
+                    
+                    # Logic kiểm tra chéo (Cross-validation)
+                    is_valid = True
+                    if a_type_input == "Stock" and market_type not in ['EQUITY', 'ETF']:
+                        st.error(f"Validation Error: {ticker} is a {market_type}, not a Stock.")
+                        is_valid = False
+                    elif a_type_input == "Bond" and market_type != 'ETF':
+                        # Lưu ý: yfinance nhận diện các mã như BND, AGG là ETF
+                        st.warning(f"Note: {ticker} is recognized as an ETF. Most bonds on this app must be Bond ETFs.")
+                    
+                    if is_valid:
+                        # Kiểm tra rủi ro phái sinh
+                        if a_type_input == "Derivative" and not user.is_derivative_allowed():
+                            st.error("Risk Level 4+ required for Derivatives!")
+                        else:
+                            try:
+                                # Khởi tạo đúng Class dựa trên lựa chọn
+                                if a_type_input == "Stock":
+                                    asset = Stock(ticker, price)
+                                elif a_type_input == "Bond":
+                                    asset = Bond(ticker, price)
+                                else:
+                                    asset = Derivatives(ticker, "Index")
+                                
+                                port.buy(asset, q_buy)
+                                st.success(f"Successfully bought {q_buy} {ticker} as {a_type_input}")
+                            except InsufficientFundsError as e:
+                                st.error(e)
+                else:
+                    st.error("Could not fetch market data. Please check the ticker.")
+            else:
+                st.error("Invalid ticker symbol.")
 
     with c2:
         st.subheader("Sell Assets")

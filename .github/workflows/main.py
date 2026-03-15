@@ -161,7 +161,7 @@ with tabs[0]:
         a_type = st.selectbox("Asset Class:", ["Stock", "Bond", "Derivative"])
         if st.button("Confirm Purchase"):
             if t_buy:
-                price, mkt_type = get_market_data(t_buy)
+                price, mkt_type = get_market_info(t_buy)
                 
                 if price:
                     # --- LOGIC KIỂM CHỨNG (VALIDATION) ---

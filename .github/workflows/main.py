@@ -13,12 +13,13 @@ class InsufficientSharesError(Exception): pass
 
 def resolve_stock_ticker(user_input):
     query = user_input.strip().upper()
-    if 1 <= len(query) <= 5 or "=" in query: # Support Futures like ES=F
+    if 1 <= len(query) <= 5:
         return query
     try:
         search = yf.Search(query, max_results=1)
         for result in search.quotes:
-            return result['symbol']
+            if result.get('quoteType') == 'EQUITY':
+                return result['symbol']
     except:
         pass
     return None
@@ -27,28 +28,23 @@ def resolve_stock_ticker(user_input):
 # 2. CORE CLASSES (BACKEND)
 # ==========================================
 class Asset(ABC):
-    def __init__(self, ticker, current_price, asset_type):
+    def __init__(self, ticker, current_price):
         self.ticker = ticker
         self.current_price = current_price
-        self.asset_type = asset_type
-    
     @abstractmethod
-    def get_display_name(self) -> str: pass
+    def get_asset_type(self) -> str: pass
 
 class Stock(Asset):
-    def __init__(self, ticker, current_price):
-        super().__init__(ticker, current_price, "Stock")
-    def get_display_name(self): return f"Equity: {self.ticker}"
+    def __init__(self, ticker, current_price, sector="General"):
+        super().__init__(ticker, current_price)
+        self.sector = sector
+    def get_asset_type(self): return "Stock"
 
 class Bond(Asset):
-    def __init__(self, ticker, current_price):
-        super().__init__(ticker, current_price, "Bond")
-    def get_display_name(self): return f"Fixed Income: {self.ticker}"
-
-class Derivative(Asset):
-    def __init__(self, ticker, current_price):
-        super().__init__(ticker, current_price, "Derivative")
-    def get_display_name(self): return f"Derivative/Future: {self.ticker}"
+    def __init__(self, ticker, current_price, coupon_rate=5.0):
+        super().__init__(ticker, current_price)
+        self.coupon_rate = coupon_rate
+    def get_asset_type(self): return "Bond"
 
 class Position:
     def __init__(self, asset, quantity, avg_buy_price):
@@ -66,7 +62,6 @@ class Portfolio:
     def __init__(self, initial_cash):
         self.cash_balance = initial_cash
         self.positions = {}
-    
     def buy(self, asset, quantity):
         cost = asset.current_price * quantity
         if cost > self.cash_balance:
@@ -76,7 +71,6 @@ class Portfolio:
             self.positions[asset.ticker].update_position(quantity, asset.current_price)
         else:
             self.positions[asset.ticker] = Position(asset, quantity, asset.current_price)
-
     def sell_asset(self, ticker, quantity):
         if ticker not in self.positions or self.positions[ticker].quantity < quantity:
             raise InsufficientSharesError(f"Insufficient shares of {ticker}.")
@@ -86,152 +80,155 @@ class Portfolio:
         if pos.quantity == 0: del self.positions[ticker]
 
 class UserProfile:
-    def __init__(self, name, dob, risk_level, savings_goal, strategy):
+    def __init__(self, name, dob_str, risk_level, savings_goal, strategy="classical"):
         self.name = name
-        self.dob = dob
+        self.dob = dob_str if isinstance(dob_str, date) else date.fromisoformat(str(dob_str))
         self.risk_level = risk_level
         self.savings_goal = savings_goal
         self.strategy = strategy
     @property
     def age(self):
-        return date.today().year - self.dob.year
+        today = date.today()
+        return today.year - self.dob.year
+    def get_target_weights(self):
+        if self.strategy == "buffett": return {"Stocks": 90, "Cash/Bonds": 10}
+        if self.strategy == "graham": return {"Stocks": 50, "Bonds": 50}
+        equity = max(100 - self.age, 20)
+        return {"Stocks": equity, "Fixed Income": 100 - equity}
     def is_derivative_allowed(self): return self.risk_level >= 4
 
 # ==========================================
 # 3. STREAMLIT UI (FRONTEND)
 # ==========================================
-st.set_page_config(page_title="Smart Portfolio Dashboard", layout="wide")
+st.set_page_config(page_title="Investment Management System", layout="wide")
 
-def get_market_data(ticker):
+def get_live_price(ticker):
     try:
         t = yf.Ticker(ticker)
-        # Fetching price and type info
-        price = float(t.fast_info['lastPrice'])
-        q_type = t.info.get('quoteType', 'EQUITY')
-        return price, q_type
-    except: return None, None
+        return float(t.fast_info['lastPrice'])
+    except: return 0.0
 
-# Sidebar Setup
-st.sidebar.header("👤 Profile Settings")
-u_name = st.sidebar.text_input("Investor Name", "UEH Student")
+# Sidebar Settings
+st.sidebar.header("👤 User Profile Settings")
+u_name = st.sidebar.text_input("Investor Name", "Name")
 u_dob = st.sidebar.date_input("Date of Birth", date(2000, 1, 1))
 u_risk = st.sidebar.slider("Risk Level (1-5)", 1, 5, 3)
 u_goal = st.sidebar.number_input("Savings Goal ($)", value=10000.0)
 u_cash = st.sidebar.number_input("Initial Cash ($)", value=5000.0)
-u_strat = st.sidebar.selectbox("Strategy", ["classical", "buffett", "graham"])
+u_strat = st.sidebar.selectbox("Investment Strategy", ["classical", "buffett", "graham"])
 
-if st.sidebar.button("Reset All Data"):
-    st.session_state.clear()
-    st.rerun()
-
-# Session State & Sync
+# Session State Management & Data Sync
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = Portfolio(u_cash)
+
 if 'user' not in st.session_state:
     st.session_state.user = UserProfile(u_name, u_dob, u_risk, u_goal, u_strat)
 else:
-    # Update user object with current sidebar values
-    st.session_state.user.name, st.session_state.user.dob = u_name, u_dob
-    st.session_state.user.risk_level, st.session_state.user.strategy = u_risk, u_strat
+    # Sync Sidebar changes to the dashboard instantly
+    st.session_state.user.name = u_name
+    st.session_state.user.dob = u_dob
+    st.session_state.user.risk_level = u_risk
+    st.session_state.user.strategy = u_strat
     st.session_state.user.savings_goal = u_goal
 
 port = st.session_state.portfolio
 user = st.session_state.user
 
+# Main Dashboard Header
 st.title("📊 Financial Portfolio Dashboard")
-st.info(f"Investor: **{user.name}** | Age: **{user.age}** | Strategy: **{user.strategy.upper()}**")
+st.write(f"Welcome back, **{user.name}** ({user.age} years old) | Strategy: **{user.strategy.upper()}**")
 
-tabs = st.tabs(["🎯 Auto-Detect Trade", "💰 Portfolio Summary", "📈 Market View"])
+tabs = st.tabs(["🎯 Trading Terminal", "💰 Portfolio Summary", "📈 Market Analysis"])
 
-# TAB 1: SMART TRADING
+# TAB 1: TRADING TERMINAL
 with tabs[0]:
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Buy Asset (Auto-Detect)")
-        t_buy = st.text_input("Ticker Symbol (e.g., TSLA, BND, ES=F):", key="t_buy").upper()
-        q_buy = st.number_input("Quantity:", min_value=1, step=1)
-        
-        if st.button("Execute Purchase"):
+        st.subheader("Buy Assets")
+        t_buy = st.text_input("Enter Ticker (e.g., AAPL):", key="t_buy").upper()
+        q_buy = st.number_input("Quantity:", min_value=1, step=1, key="q_buy")
+        a_type = st.selectbox("Asset Class:", ["Stock", "Bond", "Derivative"])
+        if st.button("Confirm Buy"):
             ticker = resolve_stock_ticker(t_buy)
             if ticker:
-                price, mkt_type = get_market_data(ticker)
-                if price:
-                    st.write(f"**Detected Asset Type:** {mkt_type} | **Price:** ${price:,.2f}")
-                    
-                    # Logic Mapping
-                    asset = None
-                    if mkt_type == 'EQUITY':
-                        asset = Stock(ticker, price)
-                    elif mkt_type == 'ETF':
-                        # Bonds are usually ETFs in Yahoo Finance (BND, AGG)
-                        asset = Bond(ticker, price)
-                    elif mkt_type in ['FUTURE', 'OPTION']:
-                        if not user.is_derivative_allowed():
-                            st.error("Access Denied: Risk Level 4 required for Derivatives.")
-                        else:
-                            asset = Derivative(ticker, price)
+                price = get_live_price(ticker)
+                if price > 0:
+                    if a_type == "Derivative" and not user.is_derivative_allowed():
+                        st.error("Risk Level 4+ required for Derivative trading!")
                     else:
-                        asset = Stock(ticker, price) # Default fallback
-                    
-                    if asset:
                         try:
+                            asset = Stock(ticker, price) if a_type == "Stock" else Bond(ticker, price)
                             port.buy(asset, q_buy)
-                            st.success(f"Successfully added {q_buy} units of {ticker} to your portfolio.")
+                            st.success(f"Bought {q_buy} units of {ticker} at ${price:,.2f}")
                         except InsufficientFundsError as e: st.error(e)
-                else: st.error("Price data unavailable for this ticker.")
-            else: st.error("Ticker not found.")
+                else: st.error("Market price unavailable.")
+            else: st.error("Invalid ticker.")
 
     with c2:
-        st.subheader("Sell Asset")
-        t_sell = st.text_input("Symbol to Sell:", key="t_sell").upper()
-        q_sell = st.number_input("Quantity to Sell:", min_value=1, step=1, key="qs")
-        if st.button("Execute Sale"):
+        st.subheader("Sell Assets")
+        t_sell = st.text_input("Enter Ticker to Sell:", key="t_sell").upper()
+        q_sell = st.number_input("Quantity to Sell:", min_value=1, step=1, key="q_sell")
+        if st.button("Confirm Sell"):
             try:
                 port.sell_asset(t_sell, q_sell)
-                st.success(f"Sale confirmed: {q_sell} {t_sell}")
+                st.success(f"Successfully sold {q_sell} units of {t_sell}")
             except Exception as e: st.error(e)
 
-# TAB 2: SUMMARY
+# TAB 2: PORTFOLIO SUMMARY
 with tabs[1]:
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Available Cash", f"${port.cash_balance:,.2f}")
+    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1.metric("Cash Balance", f"${port.cash_balance:,.2f}")
     
     if port.positions:
         rows = []
-        total_assets = 0
+        total_assets_value = 0
         for t, pos in port.positions.items():
-            # Refresh price
-            t_price, _ = get_market_data(t)
-            if t_price: pos.asset.current_price = t_price
+            current_p = get_live_price(t)
+            pos.asset.current_price = current_p
+            total_assets_value += pos.market_value()
             
-            val = pos.market_value()
-            total_assets += val
+            pnl_val = pos.pnl()
             rows.append({
-                "Ticker": t, "Type": pos.asset.asset_type, "Qty": pos.quantity,
-                "Avg Cost": f"${pos.avg_buy_price:,.2f}", "Current": f"${pos.asset.current_price:,.2f}",
-                "Profit/Loss": pos.pnl()
+                "Ticker": t, 
+                "Qty": pos.quantity, 
+                "Avg Price": f"${pos.avg_buy_price:,.2f}", 
+                "Current Price": f"${current_p:,.2f}",
+                "P&L ($)": pnl_val
             })
         
-        nav = port.cash_balance + total_assets
-        m2.metric("Portfolio NAV", f"${nav:,.2f}")
-        m3.metric("Goal Progress", f"{(nav/user.savings_goal)*100:.1f}%")
+        total_nav = port.cash_balance + total_assets_value
+        col_m2.metric("Total NAV", f"${total_nav:,.2f}")
+        col_m3.metric("Savings Goal", f"${user.savings_goal:,.2f}", f"{((total_nav/user.savings_goal)*100):.1f}% of target")
 
+        # Display Dataframe with color coding
         df = pd.DataFrame(rows)
-        st.dataframe(df.style.applymap(lambda x: 'color: green' if x > 0 else 'color: red', subset=['Profit/Loss']))
-
-        # Chart
-        fig, ax = plt.subplots(figsize=(5,3))
-        ax.pie([pos.market_value() for pos in port.positions.values()] + [port.cash_balance], 
-               labels=list(port.positions.keys()) + ["Cash"], autopct='%1.1f%%')
+        def color_pnl(val):
+            color = 'green' if val > 0 else 'red'
+            return f'color: {color}'
+        
+        st.subheader("Holdings Detail")
+        st.dataframe(df.style.applymap(color_pnl, subset=['P&L ($)']))
+        
+        # Allocation Chart
+        st.subheader("Asset Allocation")
+        labels = list(port.positions.keys()) + ["Cash"]
+        sizes = [p.market_value() for p in port.positions.values()] + [port.cash_balance]
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140)
         st.pyplot(fig)
     else:
-        st.info("No active positions.")
+        st.info("Your portfolio is currently empty. Start trading to see your summary!")
 
-# TAB 3: ANALYSIS
+# TAB 3: MARKET ANALYSIS
 with tabs[2]:
-    t_view = st.text_input("Search Symbol for Chart:", value="AAPL").upper()
-    if st.button("Show History"):
-        hist = yf.download(t_view, period="6mo")
-        if not hist.empty:
-            st.line_chart(hist['Close'])
-        else: st.error("Data not found.")
+    st.subheader("Historical Price Charts")
+    t_chart = st.text_input("Symbol to Analyze:", value="AAPL").upper()
+    period = st.select_slider("Select Period", options=["1mo", "3mo", "6mo", "1y", "5y"])
+    if st.button("Generate Chart"):
+        with st.spinner('Fetching market data...'):
+            data = yf.download(t_chart, period=period)
+            if not data.empty:
+                st.line_chart(data['Close'])
+                st.write(f"Latest Stats for {t_chart}:")
+                st.table(data.tail(5))
+            else: st.warning("Data not found for this symbol.")

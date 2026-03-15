@@ -225,8 +225,8 @@ with tabs[1]:
             pnl_val = pos.pnl()
             rows.append({
                 "Ticker": t, 
-                "Qty": pos.quantity, 
-                "Avg Price": f"${pos.avg_buy_price:,.2f}", 
+                "Quantity": pos.quantity, 
+                "Average Price": f"${pos.avg_buy_price:,.2f}", 
                 "Current Price": f"${current_p:,.2f}",
                 "P&L ($)": pnl_val
             })
@@ -258,7 +258,7 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Historical Price Charts")
     t_chart = st.text_input("Symbol to Analyze:", value="AAPL").upper()
-    period = st.select_slider("Select Period", options=["1mo", "3mo", "6mo", "1y", "5y"])
+    period = st.select_slider("Select Period", options=["1mo", "3mo", "6mo", "1y", "5y","10y"])
     if st.button("Generate Chart"):
         with st.spinner('Fetching market data...'):
             data = yf.download(t_chart, period=period)

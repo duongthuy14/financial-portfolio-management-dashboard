@@ -102,6 +102,19 @@ class UserProfile:
 # ==========================================
 st.set_page_config(page_title="Investment Management System", layout="wide")
 
+def get_market_data(ticker):
+    try:
+        t = yf.Ticker(ticker)
+        # Sử dụng fast_info vì nó ổn định hơn info thông thường
+        price = float(t.fast_info['lastPrice'])
+        # Cố gắng lấy loại tài sản, nếu lỗi mặc định là EQUITY
+        try:
+            q_type = t.info.get('quoteType', 'EQUITY')
+        except:
+            q_type = 'EQUITY' 
+        return price, q_type
+    except: return None, None
+        
 def get_live_price(ticker):
     try:
         t = yf.Ticker(ticker)
@@ -139,19 +152,6 @@ st.title("📊 Financial Portfolio Dashboard")
 st.write(f"Welcome back, **{user.name}** ({user.age} years old) | Strategy: **{user.strategy.upper()}**")
 
 tabs = st.tabs(["🎯 Trading Terminal", "💰 Portfolio Summary", "📈 Market Analysis"])
-
-def get_asset_details(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        info = t.fast_info
-        # Lấy loại tài sản (yfinance đôi khi để trong t.info['quoteType'])
-        full_info = t.info
-        return {
-            "price": float(info['lastPrice']),
-            "type": full_info.get('quoteType', 'UNKNOWN')
-        }
-    except:
-        return None
         
 # TAB 1: TRADING TERMINAL
 with tabs[0]:
@@ -161,46 +161,33 @@ with tabs[0]:
         t_buy = st.text_input("Enter Ticker (e.g., AAPL):", key="t_buy").upper()
         q_buy = st.number_input("Quantity:", min_value=1, step=1, key="q_buy")
         a_type = st.selectbox("Asset Class:", ["Stock", "Bond", "Derivative"])
-        if st.button("Confirm Buy"):
-            ticker = resolve_stock_ticker(t_buy)
-            if ticker:
-                details = get_asset_details(ticker)
+        if st.button("Confirm Purchase"):
+            if t_buy:
+                ticker = resolve_stock_ticker(t_buy)
+                price, mkt_type = get_market_data(ticker)
                 
-                if details and details['price'] > 0:
-                    market_type = details['type'] # Ví dụ: 'EQUITY' hoặc 'ETF'
-                    price = details['price']
-                    
-                    # Logic kiểm tra chéo (Cross-validation)
-                    is_valid = True
-                    if a_type_input == "Stock" and market_type not in ['EQUITY', 'ETF']:
-                        st.error(f"Validation Error: {ticker} is a {market_type}, not a Stock.")
-                        is_valid = False
-                    elif a_type_input == "Bond" and market_type != 'ETF':
-                        # Lưu ý: yfinance nhận diện các mã như BND, AGG là ETF
-                        st.warning(f"Note: {ticker} is recognized as an ETF. Most bonds on this app must be Bond ETFs.")
-                    
-                    if is_valid:
-                        # Kiểm tra rủi ro phái sinh
-                        if a_type_input == "Derivative" and not user.is_derivative_allowed():
-                            st.error("Risk Level 4+ required for Derivatives!")
+                if price and price > 0:
+                    # MAPPING LOGIC
+                    asset = None
+                    if "=" in ticker or mkt_type in ['FUTURE', 'OPTION']:
+                        if user.is_derivative_allowed():
+                            asset = Derivative(ticker, price)
                         else:
-                            try:
-                                # Khởi tạo đúng Class dựa trên lựa chọn
-                                if a_type_input == "Stock":
-                                    asset = Stock(ticker, price)
-                                elif a_type_input == "Bond":
-                                    asset = Bond(ticker, price)
-                                else:
-                                    asset = Derivatives(ticker, "Index")
-                                
-                                port.buy(asset, q_buy)
-                                st.success(f"Successfully bought {q_buy} {ticker} as {a_type_input}")
-                            except InsufficientFundsError as e:
-                                st.error(e)
+                            st.error("Derivative blocked! Need Risk Level 4+.")
+                    elif mkt_type == 'ETF':
+                        asset = Bond(ticker, price)
+                    else:
+                        asset = Stock(ticker, price)
+                    
+                    if asset:
+                        try:
+                            port.buy(asset, q_buy)
+                            st.success(f"Bought {q_buy} {ticker} @ ${price:,.2f}")
+                        except InsufficientFundsError as e: st.error(e)
                 else:
-                    st.error("Could not fetch market data. Please check the ticker.")
+                    st.error("Ticker not found or price unavailable.")
             else:
-                st.error("Invalid ticker symbol.")
+                st.warning("Please enter a ticker symbol.")
 
     with c2:
         st.subheader("Sell Assets")

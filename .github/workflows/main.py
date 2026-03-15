@@ -108,7 +108,8 @@ def get_market_info(ticker):
         # Sử dụng fast_info để lấy giá nhanh
         price = float(t.fast_info['lastPrice'])
         # Lấy quoteType để kiểm tra loại tài sản
-        mkt_type = t.info.get('quoteType', 'UNKNOWN')
+        metadata = t.get_history_metadata
+        mkt_type = metadata.get('instrumentType', 'EQUITY').upper()
         return price, mkt_type
     except:
         return None, None
@@ -117,7 +118,11 @@ def get_live_price(ticker):
     try:
         t = yf.Ticker(ticker)
         return float(t.fast_info['lastPrice'])
-    except: return 0.0
+    except: 
+        try:
+            return float(t.history(period="1d")['Close'].iloc[-1])
+        except:
+            return 0.0
         
 # Sidebar Settings
 st.sidebar.header("👤 User Profile Settings")

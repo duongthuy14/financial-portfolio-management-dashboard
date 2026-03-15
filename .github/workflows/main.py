@@ -117,7 +117,7 @@ def get_live_price(ticker):
 # Sidebar Setup
 st.sidebar.header("👤 User Profile")
 u_name = st.sidebar.text_input("Name")
-u_dob = st.sidebar.date_input("Date of birth")
+u_dob = st.sidebar.date_input("Date of birth","2000-1-1")
 u_risk = st.sidebar.slider("Risk level (1-5)", 1, 5, 3)
 u_goal = st.sidebar.number_input("Mục tiêu tiết kiệm ($)", value=10000.0)
 u_cash = st.sidebar.number_input("Vốn ban đầu ($)", value=5000.0)

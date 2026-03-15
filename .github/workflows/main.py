@@ -221,7 +221,7 @@ with tabs[1]:
         rows = []
         total_assets_value = 0
         for t, pos in port.positions.items():
-            current_p = get_live_price(t)
+            current_p = get_market_data(t)
             pos.asset.current_price = current_p
             total_assets_value += pos.market_value()
             

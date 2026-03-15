@@ -102,26 +102,23 @@ class UserProfile:
 # ==========================================
 st.set_page_config(page_title="Investment Management System", layout="wide")
 
-def get_market_data(ticker):
+def get_market_info(ticker):
     try:
         t = yf.Ticker(ticker)
-        # Sử dụng fast_info để lấy giá (rất nhanh và ổn định)
+        # Sử dụng fast_info để lấy giá nhanh
         price = float(t.fast_info['lastPrice'])
-        
-        # Sử dụng metadata để lấy loại tài sản thay vì t.info (giảm lỗi)
-        metadata = t.get_history_metadata()
-        mkt_type = metadata.get('instrumentType', 'EQUITY').upper()
-        
+        # Lấy quoteType để kiểm tra loại tài sản
+        mkt_type = t.info.get('quoteType', 'UNKNOWN')
         return price, mkt_type
-    except Exception as e:
-        # Nếu fast_info lỗi, thử cách truyền thống nhưng có bọc bảo vệ
-        try:
-            t = yf.Ticker(ticker)
-            price = t.history(period="1d")['Close'].iloc[-1]
-            return float(price), "EQUITY"
-        except:
-            return None, None
-
+    except:
+        return None, None
+        
+def get_live_price(ticker):
+    try:
+        t = yf.Ticker(ticker)
+        return float(t.fast_info['lastPrice'])
+    except: return 0.0
+        
 # Sidebar Settings
 st.sidebar.header("👤 User Profile Settings")
 u_name = st.sidebar.text_input("Investor Name", "Name")
@@ -221,7 +218,7 @@ with tabs[1]:
         rows = []
         total_assets_value = 0
         for t, pos in port.positions.items():
-            current_p = get_market_data(t)
+            current_p = get_live_price(t)
             pos.asset.current_price = current_p
             total_assets_value += pos.market_value()
             

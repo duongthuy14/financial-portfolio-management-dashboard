@@ -108,7 +108,7 @@ def get_market_info(ticker):
         # Sử dụng fast_info để lấy giá nhanh
         price = float(t.fast_info['lastPrice'])
         # Lấy quoteType để kiểm tra loại tài sản
-        metadata = t.get_history_metadata
+        metadata = t.get_history_metadata()
         mkt_type = metadata.get('instrumentType', 'EQUITY').upper()
         return price, mkt_type
     except:

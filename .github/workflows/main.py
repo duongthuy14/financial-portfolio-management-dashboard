@@ -201,8 +201,8 @@ with tabs[0]:
                             st.success(f"✅ Success: Bought {q_buy} {t_buy} at ${price:,.2f}")
                         except InsufficientFundsError as e:
                             st.error(e)
-                else:
-                    st.error("Could not find Ticker or fetch price.")
+                        else:
+                            st.error("Could not find Ticker or fetch price.")
 
     with c2:
         st.subheader("Sell Assets")

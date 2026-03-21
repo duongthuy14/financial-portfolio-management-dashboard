@@ -1,0 +1,41 @@
+name: Python Script Workflow - Update Dashboard
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  run-python-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Tải mã nguồn repository về máy ảo
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Debug: Xem thư mục hiện tại có những file nào
+      - name: Show current directory and files
+        run: |
+          pwd
+          ls -la
+
+      # 3. Cài đặt Python 3.10
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 4. (Tùy chọn nhưng rất khuyến khích) Cài đặt các package cần thiết
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "No requirements.txt found - skipping pip install"
+          fi
+
+      # 5. Chạy script (đã sửa tên file: loại bỏ khoảng trắng)
+      - name: Run update script
+        run: python update_dashboard.py

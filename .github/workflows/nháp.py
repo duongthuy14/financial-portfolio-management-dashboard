@@ -11,8 +11,8 @@ from abc import ABC, abstractmethod
 # =====================================================================
 
 def resolve_stock_ticker(user_input):
-    query = user_input.strip()
-    if query.isupper() and 1 <= len(query) <= 5:
+    query = user_input.strip().upper()
+    if 1 <= len(query) <= 5:
         try:
             check = yf.Ticker(query)
             if check.fast_info['lastPrice'] > 0:
@@ -24,7 +24,7 @@ def resolve_stock_ticker(user_input):
         for result in search.quotes:
             if result.get('quoteType') == 'EQUITY':
                 return result['symbol']
-    except Exception:
+    except:
         pass
     return None
 
@@ -80,7 +80,7 @@ class EquityFund(Stock):
         # 1. Initialize the robust Stock parent (which calls Asset)
         # This automatically fetches current_price using yfinance
         super().__init__(ticker, sector)
-
+        try:
         # 2. Use yfinance to get Fund-specific metadata
         # We use yf.Ticker(ticker) to get the info dictionary
         ticker_info = yf.Ticker(ticker).info

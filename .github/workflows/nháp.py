@@ -12,29 +12,39 @@ from abc import ABC, abstractmethod
 
 def resolve_stock_ticker(user_input):
     query = user_input.strip().upper()
-    if 1 <= len(query) <= 5:
-        try:
-            check = yf.Ticker(query)
-            if check.fast_info['lastPrice'] > 0:
-                return query
-        except:
-            pass
+    if not query:
+        return None
+
     try:
-        search = yf.Search(query, max_results=5)
-        for result in search.quotes:
-            if result.get('quoteType') == 'EQUITY':
-                return result['symbol']
-    except:
+        ticker = yf.Ticker(query)
+        info = ticker.fast_info
+        if info.get('lastPrice', 0) > 0:
+            return query
+    except Exception:
         pass
+
+    # Tìm kiếm thay thế (dùng yfinance search-like behavior)
+    try:
+        suggestions = yf.utils.get_all_symbol_info(query)
+        if suggestions:
+            for sym in suggestions:
+                if sym.upper().startswith(query):
+                    t = yf.Ticker(sym)
+                    if t.fast_info.get('lastPrice', 0) > 0:
+                        return sym
+    except Exception:
+        pass
+
     return None
+
 
 class UserProfile:
     def __init__(self, name, dob_str, risk_level, savings_goal, strategy="classical"):
         self.name = name
         self.dob = date.fromisoformat(dob_str)
-        self.risk_level = risk_level
-        self.savings_goal = savings_goal
-        self.strategy = strategy
+        self.risk_level = int(risk_level)
+        self.savings_goal = float(savings_goal)
+        self.strategy = strategy.lower()
 
     @property
     def age(self):
@@ -43,173 +53,191 @@ class UserProfile:
 
     def get_target_weights(self):
         if self.strategy == "buffett":
-            return {"Stocks": 90, "Commodities": 0, "Fixed Income": 10}
+            return {"Stocks": 90, "Fixed Income": 10, "Commodities": 0}
         elif self.strategy == "graham":
             return {"Stocks": 50, "Fixed Income": 50, "Commodities": 0}
-
+        # classical / age-based
         equity_target = max(100 - self.age, 20)
-        return {"Stocks": equity_target, "Fixed Income": 100 - equity_target}
+        return {"Stocks": equity_target, "Fixed Income": 100 - equity_target, "Commodities": 0}
 
     def is_derivative_allowed(self):
         return self.risk_level >= 4
 
-class InsufficientFundsError(Exception): pass
-class InsufficientSharesError(Exception): pass
+
+class InsufficientFundsError(Exception):
+    pass
+
+
+class InsufficientSharesError(Exception):
+    pass
+
 
 class Asset(ABC):
     def __init__(self, ticker: str, current_price: float):
-        self.ticker = ticker
-        self.current_price = current_price
+        self.ticker = ticker.upper()
+        self.current_price = float(current_price)
+
     @abstractmethod
-    def get_asset_type(self) -> str: pass
+    def get_asset_type(self) -> str:
+        pass
+
 
 class Stock(Asset):
-    def __init__(self, ticker: str, current_price: float, sector: str):
+    def __init__(self, ticker: str, current_price: float, sector: str = "Unknown"):
         super().__init__(ticker, current_price)
         self.sector = sector
-    def get_asset_type(self): return "Stock"
-
-class Bond(Asset):
-    def __init__(self, ticker: str, current_price: float, coupon_rate: float):
-        super().__init__(ticker, current_price)
-        self.coupon_rate = coupon_rate
-    def get_asset_type(self): return "Bond"
-
-class EquityFund(Stock):
-    def __init__(self, ticker, sector="Financial Services"):
-        # 1. Initialize the robust Stock parent (which calls Asset)
-        # This automatically fetches current_price using yfinance
-        super().__init__(ticker, sector)
-        try:
-        # 2. Use yfinance to get Fund-specific metadata
-        # We use yf.Ticker(ticker) to get the info dictionary
-        ticker_info = yf.Ticker(ticker).info
-
-        self.expense_ratio = ticker_info.get('expenseRatio', 0)
-        self.fund_family = ticker_info.get('fundFamily', 'Unknown')
-        self.category = ticker_info.get('category', 'Equity Fund')
 
     def get_asset_type(self):
-        """Overrides the parent to identify as a Fund for reporting."""
+        return "Stock"
+
+
+class Bond(Asset):
+    def __init__(self, ticker: str, current_price: float, coupon_rate: float = 0.0):
+        super().__init__(ticker, current_price)
+        self.coupon_rate = coupon_rate
+
+    def get_asset_type(self):
+        return "Bond"
+
+
+class EquityFund(Asset):  
+    def __init__(self, ticker: str, current_price: float):
+        super().__init__(ticker, current_price)
+        try:
+            info = yf.Ticker(ticker).info
+            self.expense_ratio = info.get('expenseRatio', 0.0)
+            self.fund_family = info.get('fundFamily', 'Unknown')
+            self.category = info.get('category', 'Equity Fund')
+        except:
+            self.expense_ratio = 0.0
+            self.fund_family = 'Unknown'
+            self.category = 'Equity Fund'
+
+    def get_asset_type(self):
         return "Equity Fund"
 
-    def get_annual_cost(self, current_market_value):
-        """
-        Calculates the dollar amount lost to fees per year.
-        Note: market_value is now managed by the Position class.
-        """
-        return current_market_value * self.expense_ratio
+    def get_annual_cost(self, market_value):
+        return market_value * self.expense_ratio
 
-    def get_risk_profile(self):
-        """Returns a behavioral description for the Portfolio evaluation."""
-        return f"Diversified Equity Exposure ({self.category}) managed by {self.fund_family}"
-    
+
 class Commodities(Asset):
-    def __init__(self, ticker):
-        """
-        In the robust system, the Asset only needs the ticker.
-        Position handles the quantity and purchase math.
-        """
-        # 1. Initialize robust Parent (Asset)
-        # This automatically fetches current_price using yfinance
-        super().__init__(ticker)
-
-        # 2. Commodity-specific info
-        # We can fetch the long name (e.g., "Gold June 24") for better reporting
+    def __init__(self, ticker: str, current_price: float):
+        super().__init__(ticker, current_price)
         try:
-            self.full_name = yf.Ticker(ticker).info.get('shortName', ticker)
+            info = yf.Ticker(ticker).info
+            self.full_name = info.get('shortName', ticker)
         except:
             self.full_name = ticker
 
-    def get_asset_type(self) -> str:
+    def get_asset_type(self):
         return "Commodity"
 
-    def get_risk_profile(self):
-        """Behavioral insight for the UserProfile evaluation."""
-        return f"Inflation Hedge / Hard Asset ({self.full_name})"
 
 class Derivatives(Asset):
-    def __init__(self, ticker, underlying_ticker):
-        super().__init__(ticker) # Fixed missing current_price arg based on logic provided, simplified handling below
+    def __init__(self, ticker: str, current_price: float, underlying_ticker: str = ""):
+        super().__init__(ticker, current_price)
         self.underlying_ticker = underlying_ticker
         try:
-            self.contract_info = yf.Ticker(ticker).info
-            self.multiplier = self.contract_info.get('multiplier', 100)
+            info = yf.Ticker(ticker).info
+            self.multiplier = info.get('multiplier', 100)
         except:
             self.multiplier = 100
-    def get_asset_type(self) -> str: return "Derivative"
+
+    def get_asset_type(self):
+        return "Derivative"
+
 
 class Position:
     def __init__(self, asset: Asset, quantity: int, avg_buy_price: float):
         self.asset = asset
-        self.quantity = quantity
-        self.avg_buy_price = avg_buy_price
+        self.quantity = int(quantity)
+        self.avg_buy_price = float(avg_buy_price)
+
     def market_value(self) -> float:
         return self.quantity * self.asset.current_price
+
     def pnl(self) -> float:
         return (self.asset.current_price - self.avg_buy_price) * self.quantity
+
     def update_position(self, extra_qty: int, price: float):
         total_cost = (self.quantity * self.avg_buy_price) + (extra_qty * price)
         self.quantity += extra_qty
         self.avg_buy_price = total_cost / self.quantity
 
+
 class Portfolio:
     def __init__(self, initial_cash: float):
-        self.cash_balance = initial_cash
-        self.positions = {}
+        self.cash_balance = float(initial_cash)
+        self.positions = {} 
 
     def buy(self, asset: Asset, quantity: int):
         cost = asset.current_price * quantity
-        if cost > self.cash_balance:
-            raise InsufficientFundsError(f"Trade failed. Required: ${cost}, Available: ${self.cash_balance}")
+        if cost > self.cash_balance + 0.001: 
+            raise InsufficientFundsError(f"Required: ${cost:,.2f} — Available: ${self.cash_balance:,.2f}")
         self.cash_balance -= cost
-        if asset.ticker in self.positions:
-            self.positions[asset.ticker].update_position(quantity, asset.current_price)
+        ticker = asset.ticker
+        if ticker in self.positions:
+            self.positions[ticker].update_position(quantity, asset.current_price)
         else:
-            self.positions[asset.ticker] = Position(asset, quantity, asset.current_price)
+            self.positions[ticker] = Position(asset, quantity, asset.current_price)
 
     def sell_asset(self, ticker: str, quantity: int):
         if ticker not in self.positions or self.positions[ticker].quantity < quantity:
-            raise InsufficientSharesError(f"Trade failed: Not enough shares of {ticker} to sell.")
+            raise InsufficientSharesError(f"Not enough {ticker} to sell ({quantity} requested)")
         pos = self.positions[ticker]
         revenue = quantity * pos.asset.current_price
         self.cash_balance += revenue
         pos.quantity -= quantity
-        if pos.quantity == 0:
+        if pos.quantity <= 0:
             del self.positions[ticker]
 
     def get_portfolio_weights(self):
-        total_value = self.cash_balance + sum(pos.market_value() for pos in self.positions.values())
-        weights = {}
-        for ticker, pos in self.positions.items():
-            weights[ticker] = pos.market_value() / total_value
-        weights['Cash'] = self.cash_balance / total_value
+        total = self.cash_balance + sum(p.market_value() for p in self.positions.values())
+        if total <= 0:
+            return {"Cash": 1.0}
+        weights = {t: p.market_value() / total for t, p in self.positions.items()}
+        weights["Cash"] = self.cash_balance / total
         return weights
 
+
+# =====================================================================
+# File handling
+# =====================================================================
+
 USER_FILE = "users.json"
+
 def load_users():
     if os.path.exists(USER_FILE):
-        with open(USER_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(USER_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
 def save_users(users):
-    with open(USER_FILE, "w") as f:
-        json.dump(users, f)
-
-def get_live_price(ticker):
     try:
-        return float(yf.Ticker(ticker).fast_info['lastPrice'])
+        with open(USER_FILE, "w", encoding="utf-8") as f:
+            json.dump(users, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        st.error(f"Cannot save user data: {e}")
+
+
+def get_live_price(ticker: str) -> float:
+    try:
+        price = yf.Ticker(ticker).fast_info["lastPrice"]
+        return float(price)
     except Exception:
         return 0.0
 
+
 # =====================================================================
-# PART 2: STREAMLIT DASHBOARD UI
+# STREAMLIT UI
 # =====================================================================
 
 st.set_page_config(page_title="Portfolio Dashboard", layout="wide")
 
-# Khởi tạo Session State để lưu dữ liệu khi trang reload
+# Khởi tạo session state
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user' not in st.session_state:
@@ -217,194 +245,201 @@ if 'user' not in st.session_state:
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = None
 
+
 def render_login():
     st.title("📊 Investment Portfolio Dashboard")
-    st.subheader("Creating investor's profile")
+    st.subheader("Create or load investor profile")
 
     users = load_users()
 
     with st.form("setup_form"):
-        name = st.text_input("Investor's Name:")
-        dob = st.text_input("Date of Birth (YYYY-MM-DD):", value="2000-01-01")
-        risk = st.number_input("Risk Tolerance (1-5):", min_value=1, max_value=5, value=3)
-        goal = st.number_input("Savings goal ($):", min_value=0.0, value=10000.0)
-        cash = st.number_input("Initial amount ($):", min_value=0.0, value=10000.0)
-        strategy = st.selectbox("Strategy:", ["classical", "buffett", "graham"])
+        name = st.text_input("Investor's Name", value="").strip()
+        dob = st.text_input("Date of Birth (YYYY-MM-DD)", value="2000-01-01")
+        risk = st.slider("Risk Tolerance (1–5)", 1, 5, 3)
+        goal = st.number_input("Savings Goal ($)", min_value=0.0, value=10000.0, step=1000.0)
+        initial_cash = st.number_input("Initial Cash ($)", min_value=0.0, value=10000.0, step=1000.0)
+        strategy = st.selectbox("Investment Style", ["classical", "buffett", "graham"])
 
-        submit = st.form_submit_button("Start")
+        submitted = st.form_submit_button("Start Investing", type="primary")
 
-        if submit:
+        if submitted:
+            if not name:
+                st.error("Please enter your name.")
+                return
             try:
                 date.fromisoformat(dob)
-            except ValueError:
-                st.error("Date format error. Please use the format YYYY-MM-DD.")
+            except:
+                st.error("Invalid date format. Use YYYY-MM-DD")
                 return
-            
-            # Bỏ từ "Error" để UI thân thiện người dùng
-            if cash > goal:
-                st.error("Initial amount cannot exceed savings goal.")
+            if initial_cash > goal + 1:
+                st.error("Initial cash should not exceed savings goal.")
                 return
 
-            if name not in users:
-                users[name] = dob
-                save_users(users)
-                st.success(f"A new profile for {name} was created.")
-            else:
-                st.success(f"Welcome back, {name}.")
-
-            # Khởi tạo object logic và lưu vào session state
             st.session_state.user = UserProfile(name, dob, risk, goal, strategy)
-            st.session_state.portfolio = Portfolio(cash)
+            st.session_state.portfolio = Portfolio(initial_cash)
             st.session_state.logged_in = True
+
+            users[name] = dob
+            save_users(users)
+
+            st.success(f"Welcome {name}!")
             st.rerun()
+
 
 def render_dashboard():
     user = st.session_state.user
     portfolio = st.session_state.portfolio
 
-    st.sidebar.title("Transaction System")
-    st.sidebar.markdown(f"**User:** {user.name} ({user.age} years old)")
-    st.sidebar.markdown(f"**Strategy:** {user.strategy.capitalize()}")
+    st.sidebar.title("Control Panel")
+    st.sidebar.markdown(f"**Investor:** {user.name} ({user.age} y/o)")
+    st.sidebar.markdown(f"**Style:** {user.strategy.title()}")
     st.sidebar.markdown("---")
 
-    menu = ["1. Portfolio Watching", "2. Transaction (Buy/Sell)", "3. Asset Allocation", "4. Historical Price Analysis"]
-    choice = st.sidebar.radio("Menu:", menu)
+    menu = [
+        "1. Portfolio Overview",
+        "2. Buy / Sell",
+        "3. Asset Allocation",
+        "4. Price History"
+    ]
+    choice = st.sidebar.radio("Menu", menu, index=0)
 
-    if st.sidebar.button("Log out"):
-        st.session_state.logged_in = False
-        st.session_state.user = None
-        st.session_state.portfolio = None
+    if st.sidebar.button("Logout", type="secondary"):
+        for key in ['logged_in', 'user', 'portfolio']:
+            if key in st.session_state:
+                del st.session_state[key]
         st.rerun()
 
     if choice.startswith("1"):
-        st.header("Current Portfolio")
-        st.markdown(f"**Cash balance:** `${portfolio.cash_balance:,.2f}`")
+        st.header("Portfolio Overview")
+
+        live_cash = f"${portfolio.cash_balance:,.2f}"
+        st.metric("Cash Balance", live_cash)
 
         if not portfolio.positions:
-            st.info("Empty porfolio. You are currently not holding any asset")
+            st.info("Your portfolio is currently empty.")
         else:
             total_value = portfolio.cash_balance
-            data = []
-
+            rows = []
             for ticker, pos in portfolio.positions.items():
-                live_price = get_live_price(ticker)
-                if live_price > 0:
-                    pos.asset.current_price = live_price
-
-                mkt_val = pos.market_value()
-                pnl = pos.pnl()
-                total_value += mkt_val
-
-                data.append({
+                price = get_live_price(ticker)
+                if price > 0:
+                    pos.asset.current_price = price
+                mv = pos.market_value()
+                total_value += mv
+                rows.append({
                     "Ticker": ticker,
-                    "Quantity": pos.quantity,
-                    "Average cost": f"${pos.avg_buy_price:,.2f}",
-                    "Current price": f"${pos.asset.current_price:,.2f}",
-                    "Profit/Loss ($)": f"${pnl:,.2f}",
-                    "Market value": f"${mkt_val:,.2f}"
+                    "Qty": pos.quantity,
+                    "Avg Cost": f"${pos.avg_buy_price:,.2f}",
+                    "Price": f"${price:,.2f}",
+                    "P/L ($)": f"{pos.pnl():+,.2f}",
+                    "Market Value": f"${mv:,.2f}"
                 })
+            st.dataframe(rows, use_container_width=True)
+            st.metric("Total Portfolio Value", f"${total_value:,.2f}", delta_color="normal")
 
-            st.table(data)
-            st.markdown(f"### Net Asset Value (NAV): **${total_value:,.2f}**")
-
-        st.divider()
-        st.subheader("Weights recommended")
-        target = user.get_target_weights()
-        for k, v in target.items():
-            st.write(f"- **{k}:** {v}%")
+        st.subheader("Target Allocation (according to your profile)")
+        targets = user.get_target_weights()
+        for asset, pct in targets.items():
+            st.write(f"• **{asset}**: {pct}%")
 
     elif choice.startswith("2"):
-        st.header("Asset Transaction")
-        col1, col2 = st.columns(2)
+        st.header("Trade Execution")
 
-        with col1:
-            st.subheader("Buy Order")
-            raw_ticker_buy = st.text_input("Asset ticker (VD: AAPL):")
-            asset_type = st.selectbox("Asset class:", ["1. Stock", "2. Bond", "3. Equity Fund", "4.Commodities", "5. Derivatives"])
-            qty_buy = st.number_input("Amount:", min_value=1, step=1)
+        tab_buy, tab_sell = st.tabs(["Buy", "Sell"])
 
-            if st.button("Confirm Buy Order", type="primary"):
-                ticker = resolve_stock_ticker(raw_ticker_buy)
+        with tab_buy:
+            ticker_raw = st.text_input("Ticker / Symbol", key="buy_ticker").strip().upper()
+            qty = st.number_input("Quantity", min_value=1, step=1, key="buy_qty")
+            asset_class = st.selectbox("Asset Class", [
+                "Stock", "Bond", "Equity Fund", "Commodity", "Derivative"
+            ], key="buy_class")
+
+            if st.button("Execute BUY", type="primary"):
+                ticker = resolve_stock_ticker(ticker_raw)
                 if not ticker:
-                    st.error("Invalid asset.")
-                elif asset_type.startswith("3") and not user.is_derivative_allowed():
-                    st.error("WARNING: Risk tolerance level cannot afford derivatives.")
-                else:
-                    price = get_live_price(ticker)
-                    if price == 0.0:
-                        st.error("Market price unavailable.")
-                    else:
-                        if asset_type.startswith("1"):
-                            asset = Stock(ticker, price, "Market")
-                        elif asset_type.startswith("2"):
-                            asset = Bond(ticker, price, 5.0)
-                        else:
-                            # Tạm gán thuộc tính current_price cho phái sinh
-                            asset = Derivatives(ticker, "Index")
-                            asset.current_price = price
+                    st.error("Cannot find valid ticker.")
+                    st.stop()
 
-                        try:
-                            portfolio.buy(asset, qty_buy)
-                            st.success(f"Succeeded! {qty_buy} {ticker} purchased.")
-                        except Exception as e:
-    # This 'if' check catches the error by name, which removes the traceback header
-                            if "InsufficientFundsError" in str(type(e)):
-                                st.warning("You don't have enough funds to complete this trade.", icon="💳")
-                            else:
-        # This catches actual code bugs so you know if something else is wrong
-                                st.error(f"Unexpected error: {e}")
+                price = get_live_price(ticker)
+                if price <= 0:
+                    st.error("Cannot get current price.")
+                    st.stop()
 
-        with col2:
-            st.subheader("Sell Order")
-            raw_ticker_sell = st.text_input("Asset to sell:")
-            qty_sell = st.number_input("Sold Amount:", min_value=1, step=1)
+                if asset_class == "Derivative" and not user.is_derivative_allowed():
+                    st.error("Your risk tolerance does not allow derivatives.")
+                    st.stop()
 
-            if st.button("Confirm Sell Order", type="primary"):
-                ticker = resolve_stock_ticker(raw_ticker_sell)
+                try:
+                    if asset_class == "Stock":
+                        asset = Stock(ticker, price)
+                    elif asset_class == "Bond":
+                        asset = Bond(ticker, price)
+                    elif asset_class == "Equity Fund":
+                        asset = EquityFund(ticker, price)
+                    elif asset_class == "Commodity":
+                        asset = Commodities(ticker, price)
+                    else:  # Derivative
+                        asset = Derivatives(ticker, price)
+
+                    portfolio.buy(asset, qty)
+                    st.success(f"Bought {qty} × {ticker} successfully!")
+                except InsufficientFundsError as e:
+                    st.error(str(e))
+                except Exception as e:
+                    st.error(f"Trade failed: {e}")
+
+        with tab_sell:
+            ticker_sell = st.text_input("Ticker to sell", key="sell_ticker").strip().upper()
+            qty_sell = st.number_input("Quantity to sell", min_value=1, step=1, key="sell_qty")
+
+            if st.button("Execute SELL", type="primary"):
+                ticker = resolve_stock_ticker(ticker_sell)
                 if not ticker:
-                    st.error("Invalid asset.")
+                    st.error("Invalid ticker.")
                 else:
                     try:
                         portfolio.sell_asset(ticker, qty_sell)
-                        st.success(f"Succeeded! {qty_sell} {ticker} sold.")
+                        st.success(f"Sold {qty_sell} × {ticker} successfully!")
                     except InsufficientSharesError as e:
-                        st.error(f"Transaction denied: {e}")
+                        st.error(str(e))
                     except Exception as e:
-                        st.error(f"System error: {e}")
+                        st.error(f"Error: {e}")
 
     elif choice.startswith("3"):
-        st.header("Asset Allocation Chart")
-        weights = portfolio.get_portfolio_weights()
-        filtered_weights = {k: v for k, v in weights.items() if v > 0}
+        st.header("Asset Allocation")
 
-        if not filtered_weights:
-            st.info("Unavailable allocation (current portfolio equals 0).")
+        weights = portfolio.get_portfolio_weights()
+        active_weights = {k: v for k, v in weights.items() if v > 0.001}
+
+        if len(active_weights) <= 1:
+            st.info("No allocation data to display yet.")
         else:
-            fig, ax = plt.subplots(figsize=(8,6))
-            ax.pie(filtered_weights.values(), labels=filtered_weights.keys(), autopct='%1.1f%%', startangle=140, colors=plt.cm.Paired.colors)
+            fig, ax = plt.subplots(figsize=(7, 7))
+            ax.pie(active_weights.values(), labels=active_weights.keys(),
+                   autopct='%1.1f%%', startangle=90, pctdistance=0.85)
             ax.axis('equal')
             st.pyplot(fig)
 
     elif choice.startswith("4"):
-        st.header("Historical Price Analysis")
-        raw_ticker = st.text_input("Enter ticker to view (Example: AAPL, TSLA):").upper()
-        period = st.select_slider("Interval", options=["1m", "6m", "1y", "5y", "10y"])
-        if st.button("Accessing data"):
-            ticker = resolve_stock_ticker(raw_ticker)
+        st.header("Historical Price")
+
+        ticker_raw = st.text_input("Enter ticker (e.g. AAPL, VOO, GC=F)").strip().upper()
+        period = st.select_slider("Period", ["1mo", "3mo", "6mo", "1y", "5y", "max"])
+
+        if st.button("Load Chart"):
+            ticker = resolve_stock_ticker(ticker_raw)
             if not ticker:
-                st.error("Invalid asset.")
+                st.error("Ticker not found.")
             else:
-                with st.spinner(f"Loading nearest {period} for {ticker}..."):
-                    data = yf.download(raw_ticker, period=period, progress=False)
-
-                if data.empty:
-                    st.error("Unavailable Price.")
+                with st.spinner("Downloading data..."):
+                    df = yf.download(ticker, period=period, progress=False)
+                if df.empty:
+                    st.error("No data returned.")
                 else:
-                    st.line_chart(data['Close'])
-                    st.write(f"Latest data {raw_ticker}:")
-                    st.table(data.tail(5))
+                    st.line_chart(df["Close"])
+                    st.caption(f"Last 5 trading days — {ticker}")
+                    st.dataframe(df.tail(5)[["Open", "High", "Low", "Close", "Volume"]])
 
-# Logic điều khiển luồng hiển thị
 if st.session_state.logged_in:
     render_dashboard()
 else:

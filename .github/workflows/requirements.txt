@@ -1,3 +1,3 @@
-streamlit
-yfinance
-matplotlib
+streamlit>=1.38.0
+yfinance>=0.2.40
+matplotlib>=3.8.0
